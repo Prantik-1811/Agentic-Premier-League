@@ -331,8 +331,12 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
                 bowling_team_full = full_t
                 break
 
-        # If we successfully found the bowling team's squad, add missing playing XI members to bowlers_used with 0.0
+        # If we successfully found the bowling team's squad, filter and add missing playing XI members
         if bowling_team_full and bowling_team_full in squads:
+            allowed_players = set(squads[bowling_team_full]["playing_xi"] + squads[bowling_team_full].get("bench", []))
+            # Clean and filter bowlers_used
+            bowlers_used = {name: overs for name, overs in bowlers_used.items() if name in allowed_players}
+            
             playing_xi = squads[bowling_team_full]["playing_xi"]
             for player in playing_xi:
                 if player not in bowlers_used:
