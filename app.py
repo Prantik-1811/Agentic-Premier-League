@@ -103,12 +103,12 @@ with st.sidebar:
 
     # ── All form fields bound to session_state ────────────────────────────────
     innings  = st.radio("Innings", [1, 2], index=st.session_state["innings"]-1, horizontal=True, key="innings")
-    over     = st.slider("Over", 0, 19, key="over")
+    over     = st.slider("Over", 0, 20, key="over")
     ball     = st.slider("Ball", 0, 5, key="ball")
     team_bat = st.text_input("Batting Team", key="team_batting")
     team_bowl= st.text_input("Bowling Team", key="team_bowling")
     score    = st.number_input("Score", 0, 300, key="score")
-    wickets  = st.slider("Wickets Down", 0, 9, key="wickets")
+    wickets  = st.slider("Wickets Down", 0, 10, key="wickets")
 
     st.subheader("Batters")
     strike_b = st.text_input("Strike Batter", key="strike_b")

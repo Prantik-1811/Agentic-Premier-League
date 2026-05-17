@@ -8,26 +8,38 @@ SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY")
 # TOOL 1 — Live match scraper
 def fetch_live_match_state(cricbuzz_url: str) -> dict:
     """
-    Scrapes a live Cricbuzz match page via ScraperAPI.
-    Extracts ALL fields needed to populate the match state form.
+    Scrapes the live Cricbuzz match (Commentary & Scorecard pages) via ScraperAPI.
+    Merges both to get bulletproof player squads, remaining bowler overs, and venue data.
     """
-    proxy = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={cricbuzz_url}&render=false"
+    proxy_comm = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={cricbuzz_url}&render=false"
+    scorecard_url = cricbuzz_url.replace("live-cricket-scores", "live-cricket-scorecard")
+    proxy_card = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={scorecard_url}&render=false"
 
     try:
-        resp = requests.get(proxy, timeout=20)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+        # 1. Fetch Commentary Page
+        resp_comm = requests.get(proxy_comm, timeout=20)
+        resp_comm.raise_for_status()
+        comm_soup = BeautifulSoup(resp_comm.text, "html.parser")
+
+        # 2. Fetch Scorecard Page
+        resp_card = requests.get(proxy_card, timeout=20)
+        resp_card.raise_for_status()
+        card_soup = BeautifulSoup(resp_card.text, "html.parser")
 
         # ── Innings number ────────────────────────────────────────────────────
         innings = 1
-        innings_tag = soup.find("div", class_="cb-nav-main")
-        if innings_tag:
-            text = innings_tag.get_text(" ", strip=True).lower()
-            if "2nd" in text or "2nd innings" in text or "target" in text:
+        batting_grids = card_soup.find_all("div", class_=re.compile("scorecard-bat-grid"))
+        bat_header_count = sum(1 for tag in batting_grids if "Batter" in tag.get_text())
+        if bat_header_count >= 2:
+            innings = 2
+        else:
+            # Fallback to commentary text check
+            full_text = comm_soup.get_text(" ").lower()
+            if any(k in full_text for k in ["req:", "rrr:", "target:", "required run rate"]):
                 innings = 2
 
         # ── Team names ────────────────────────────────────────────────────────
-        team_tags = soup.find_all("div", class_="cb-nav-subhdr")
+        team_tags = comm_soup.find_all("div", class_="cb-nav-subhdr")
         team_batting, team_bowling = "", ""
         if team_tags:
             raw = team_tags[0].get_text(" ", strip=True)
@@ -38,19 +50,25 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
 
         # Fallback: extract from title
         if not team_batting:
-            title = soup.find("title")
+            title = comm_soup.find("title")
             if title:
                 t = title.get_text()
                 if " vs " in t:
                     teams = t.split(" vs ")
                     team_batting = teams[0].strip().split()[-1]
                     team_bowling = teams[1].strip().split()[0]
+
+        # Clean team names from punctuation, commas, active suffixes
+        if team_batting:
+            team_batting = re.split(r'\(|\*|innings|,', team_batting, flags=re.I)[0].strip()
+        if team_bowling:
+            team_bowling = re.split(r'\(|\*|innings|,', team_bowling, flags=re.I)[0].strip()
                     
         current_score, wickets_down, over, ball = 0, 0, 0, 0
         crr, rrr = 0.0, 0.0
 
         # Try new React-based structure first
-        crr_span = soup.find(string=re.compile(r"CRR:"))
+        crr_span = comm_soup.find(string=re.compile(r"CRR:"))
         if crr_span and crr_span.parent and crr_span.parent.parent and crr_span.parent.parent.parent:
             container_text = crr_span.parent.parent.parent.get_text()
             match = re.search(r"(\d+)[-/](\d+)\(([\d\.]+)\).*CRR:\s*([\d\.]+)", container_text)
@@ -68,7 +86,7 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
 
         if current_score == 0:
             # Fallback for old design
-            score_tag = soup.find("div", class_="cb-min-bat-rw")
+            score_tag = comm_soup.find("div", class_="cb-min-bat-rw")
             if score_tag:
                 raw_score = score_tag.get_text(strip=True)
                 try:
@@ -88,7 +106,7 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
         balls_remaining = 120 - balls_bowled
 
         if crr == 0.0:
-            crr_tag = soup.find("div", class_="cb-min-run-rr")
+            crr_tag = comm_soup.find("div", class_="cb-min-run-rr")
             if crr_tag:
                 crr_text = crr_tag.get_text(strip=True)
                 if "CRR:" in crr_text:
@@ -104,14 +122,34 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
         # ── Target (innings 2 only) ───────────────────────────────────────────
         target = None
         if innings == 2:
-            target_tag = soup.find("div", class_="cb-min-inf")
-            if target_tag:
-                t_text = target_tag.get_text(strip=True)
-                match = re.search(r"target[:\s]+(\d+)", t_text, re.IGNORECASE)
-                if match:
-                    target = int(match.group(1))
+            totals = []
+            for tag in card_soup.find_all(string="Total"):
+                parent = tag.parent.parent
+                if parent:
+                    text = parent.get_text("|", strip=True)
+                    parts = text.split("|")
+                    if len(parts) >= 2:
+                        score_str = parts[1]
+                        if "-" in score_str:
+                            runs_str = score_str.split("-")[0].strip()
+                            if runs_str.isdigit():
+                                totals.append(int(runs_str))
+                        elif "/" in score_str:
+                            runs_str = score_str.split("/")[0].strip()
+                            if runs_str.isdigit():
+                                totals.append(int(runs_str))
+            if totals:
+                target = totals[0] + 1
+
             if not target:
-                full_text = soup.get_text(" ")
+                target_tag = comm_soup.find("div", class_="cb-min-inf")
+                if target_tag:
+                    t_text = target_tag.get_text(strip=True)
+                    match = re.search(r"target[:\s]+(\d+)", t_text, re.IGNORECASE)
+                    if match:
+                        target = int(match.group(1))
+            if not target:
+                full_text = comm_soup.get_text(" ")
                 match = re.search(r"[Tt]arget[:\s]+(\d+)", full_text)
                 if match:
                     target = int(match.group(1))
@@ -123,11 +161,10 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
         strike_batter, strike_runs, strike_balls   = "", 0, 0
         non_strike_batter, non_runs, non_balls     = "", 0, 0
         current_bowler = ""
-        bowlers_used   = {}
 
         # Parse React Player Grids First
         profiles = []
-        for b in soup.find_all("div", class_=re.compile("scorecard-bat-grid")):
+        for b in comm_soup.find_all("div", class_=re.compile("scorecard-bat-grid")):
             text = b.get_text(separator="|")
             if "Batter" in text or "Bowler" in text or "Key Stats" in text: continue
             parts = [p.strip() for p in text.split("|") if p.strip()]
@@ -137,22 +174,53 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
         if profiles:
             if len(profiles) >= 2:
                 p1, p2 = profiles[0], profiles[1]
-                if "*" in p1:
-                    strike_batter, strike_runs, strike_balls = p1[0].replace("*", "").strip(), int(p1[2]), int(p1[3])
-                    non_strike_batter, non_runs, non_balls = p2[0].replace("*", "").strip(), int(p2[1]), int(p2[2])
+                if len(p1) >= 3 and p1[1] == "*":
+                    strike_batter = p1[0]
+                    try: strike_runs = int(p1[2])
+                    except: pass
+                    try: strike_balls = int(p1[3])
+                    except: pass
+                    
+                    non_strike_batter = p2[0]
+                    try: non_runs = int(p2[1])
+                    except: pass
+                    try: non_balls = int(p2[2])
+                    except: pass
+                elif len(p2) >= 3 and p2[1] == "*":
+                    strike_batter = p2[0]
+                    try: strike_runs = int(p2[2])
+                    except: pass
+                    try: strike_balls = int(p2[3])
+                    except: pass
+                    
+                    non_strike_batter = p1[0]
+                    try: non_runs = int(p1[1])
+                    except: pass
+                    try: non_balls = int(p1[2])
+                    except: pass
                 else:
-                    strike_batter, strike_runs, strike_balls = p2[0].replace("*", "").strip(), int(p2[2]), int(p2[3]) if "*" in p2 else (p2[0], int(p2[1]), int(p2[2]))
-                    non_strike_batter, non_runs, non_balls = p1[0].replace("*", "").strip(), int(p1[1]), int(p1[2])
+                    strike_batter = p1[0]
+                    try: strike_runs = int(p1[1])
+                    except: pass
+                    try: strike_balls = int(p1[2])
+                    except: pass
+                    
+                    non_strike_batter = p2[0]
+                    try: non_runs = int(p2[1])
+                    except: pass
+                    try: non_balls = int(p2[2])
+                    except: pass
+
             for p in profiles[2:]:
-                if "*" in p:
-                    current_bowler = p[0].replace("*", "").strip()
+                if len(p) >= 2 and p[1] == "*":
+                    current_bowler = p[0]
                     break
             if not current_bowler and len(profiles) >= 3:
-                current_bowler = profiles[2][0].replace("*", "").strip()
+                current_bowler = profiles[2][0]
                 
         else:
             # Fallback to Old HTML structure
-            batter_rows = soup.find_all("div", class_="cb-min-itm-rw")
+            batter_rows = comm_soup.find_all("div", class_="cb-min-itm-rw")
             batters_found = []
             for row in batter_rows:
                 cols = row.find_all("div")
@@ -175,36 +243,109 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
                 non_runs          = batters_found[1]["runs"]
                 non_balls         = batters_found[1]["balls"]
 
-            bowler_rows = soup.find_all("div", class_="cb-min-itm-rw cb-min-bwl-itm")
-            for row in bowler_rows:
-                cols = row.find_all("div")
-                if len(cols) >= 4:
-                    name    = cols[0].get_text(strip=True)
-                    overs_b = cols[1].get_text(strip=True)
-                    if name:
-                        try:
-                            bowlers_used[name] = float(overs_b)
-                        except Exception:
-                            bowlers_used[name] = 0.0
-            if bowlers_used:
-                current_bowler = list(bowlers_used.keys())[-1]
-
-        # ── Venue ─────────────────────────────────────────────────────────────
+        # ── 3. Parse Venue from Scorecard Page ──────────────────────────────────
         venue = ""
-        venue_tag = soup.find("a", class_="cb-nav-tags")
-        if venue_tag:
-            venue = venue_tag.get_text(strip=True)
+        venue_tag = card_soup.find(string=re.compile(r"Venue:"))
+        if venue_tag and venue_tag.parent:
+            sibling = venue_tag.parent.find_next_sibling("a")
+            if sibling:
+                venue = sibling.get_text(strip=True)
         if not venue:
-            full_text = soup.get_text(" ")
-            match = re.search(r"(?:at|venue)[:\s]+([A-Z][^\n,]{5,40})", full_text)
-            if match:
-                venue = match.group(1).strip()
+            # Fallback to commentary page venue extraction
+            venue_tag = comm_soup.find("a", class_="cb-nav-tags")
+            if venue_tag:
+                venue = venue_tag.get_text(strip=True)
+            if not venue:
+                full_text = comm_soup.get_text(" ")
+                match = re.search(r"(?:at|venue)[:\s]+([A-Z][^\n,]{5,40})", full_text)
+                if match:
+                    venue = match.group(1).strip()
+
+        # ── 4. Parse Bowlers and Squads from Scorecard Page ──────────────────────
+        bowlers_used = {}
+        for row in card_soup.find_all("div", class_=re.compile("scorecard-bowl-grid")):
+            text = row.get_text("|", strip=True)
+            if "Bowler" in text: continue
+            parts = [p.strip() for p in text.split("|") if p.strip()]
+            if len(parts) >= 2:
+                name = parts[0]
+                overs_b = parts[1]
+                try:
+                    bowlers_used[name] = float(overs_b)
+                except ValueError:
+                    bowlers_used[name] = 0.0
+
+        # Parse squads to get all potential bowlers from playing XI
+        squads = {}
+        squad_headers = card_soup.find_all("div", string="Players")
+        for sh in squad_headers:
+            gg = sh.parent.parent.parent
+            if gg:
+                gg_text = gg.get_text("|", strip=True)
+                parts = [p.strip() for p in gg_text.split("|") if p.strip()]
+                if parts:
+                    team_name = parts[0]
+                    playing_xi = []
+                    bench = []
+                    current_list = playing_xi
+                    for p in parts[2:]:
+                        if p == "Players": continue
+                        if p == "Bench":
+                            current_list = bench
+                            continue
+                        if p == "Support Staff":
+                            break
+                        if p != ",":
+                            clean_name = p.split("(")[0].strip().replace("*", "")
+                            if clean_name:
+                                current_list.append(clean_name)
+                    squads[team_name] = {
+                        "playing_xi": playing_xi,
+                        "bench": bench
+                    }
+
+        # Find the bowling team's full name from squads matching team_bowling
+        bowling_team_full = ""
+        short_mapping = {
+            "royal challengers bengaluru": "RCB",
+            "royal challengers bangalore": "RCB",
+            "punjab kings": "PBKS",
+            "chennai super kings": "CSK",
+            "mumbai indians": "MI",
+            "kolkata knight riders": "KKR",
+            "rajasthan royals": "RR",
+            "delhi capitals": "DC",
+            "sunrisers hyderabad": "SRH",
+            "gujarat titans": "GT",
+            "lucknow super giants": "LSG"
+        }
+
+        for full_t in squads.keys():
+            cleaned_full = full_t.lower().strip()
+            match_found = False
+            for k, v in short_mapping.items():
+                if k in cleaned_full and v == team_bowling.upper():
+                    match_found = True
+                    break
+            if match_found or team_bowling.lower() in cleaned_full:
+                bowling_team_full = full_t
+                break
+
+        # If we successfully found the bowling team's squad, add missing playing XI members to bowlers_used with 0.0
+        if bowling_team_full and bowling_team_full in squads:
+            playing_xi = squads[bowling_team_full]["playing_xi"]
+            for player in playing_xi:
+                if player not in bowlers_used:
+                    bowlers_used[player] = 0.0
+
+        # Set current bowler if not set
+        if not current_bowler and bowlers_used:
+            current_bowler = list(bowlers_used.keys())[0]
 
         # ── Pitch condition (default flat, let user adjust) ───────────────────
         pitch_condition = "flat"
 
         # ── Dew factor: estimate from venue + time ────────────────────────────
-        # Evening matches at coastal venues = higher dew risk
         coastal_venues = ["wankhede", "eden", "chepauk", "rajiv gandhi", "chinnaswamy"]
         dew_factor = 0.6 if any(v in venue.lower() for v in coastal_venues) else 0.3
 

@@ -25,9 +25,53 @@ class CaptainCoolOrchestrator:
         return max(45, min(92, base - penalty + boost))
 
     def make_decision(self, match_state: MatchState, on_step=None) -> dict:
+        import time, random, re
+        import streamlit as st
+
+        def switch_to_fallback():
+            fallback = "gemini-flash-latest"
+            self.stats_analyst.model_id = fallback
+            self.strategist.model_id = fallback
+            self.devils_advocate.model_id = fallback
+            self.commentator.model_id = fallback
+
+        def retry_fn(fn):
+            max_retries = 5
+            backoff = 5.0
+            for attempt in range(max_retries):
+                try:
+                    return fn()
+                except Exception as e:
+                    err_msg = str(e)
+                    is_rate_limit = "429" in err_msg or "resource_exhausted" in err_msg.lower() or "quota" in err_msg.lower()
+                    if is_rate_limit:
+                        # Auto fallback to 1.5-flash (gemini-flash-latest) on daily quota limit
+                        current_model = getattr(self.stats_analyst, "model_id", "")
+                        if current_model == "gemini-2.5-flash":
+                            switch_to_fallback()
+                            st.toast("🔄 Quota exhausted on 2.5-flash. Switched to 1.5-flash fallback!", icon="ℹ️")
+                            try:
+                                return fn()
+                            except Exception as fallback_err:
+                                err_msg = str(fallback_err)
+
+                        if attempt < max_retries - 1:
+                            sleep_time = backoff + random.uniform(1.0, 5.0)
+                            delay_match = re.search(r"retry in ([\d\.]+)s", err_msg)
+                            if delay_match:
+                                sleep_time = float(delay_match.group(1)) + 1.5
+                            
+                            st.warning(f"⚠️ Gemini Rate Limit hit. Pausing to retry in {sleep_time:.1f}s... (Attempt {attempt+1}/{max_retries})")
+                            time.sleep(sleep_time)
+                            backoff *= 2.0
+                        else:
+                            raise e
+                    else:
+                        raise e
+
         def step(label, fn):
             if on_step: on_step(label)
-            return fn()
+            return retry_fn(fn)
 
         stats    = step("Stats Analyst", lambda: self.stats_analyst.analyze_match(match_state.to_dict()))
         proposal = step("Strategist",    lambda: self.strategist.propose_strategy(match_state.to_dict(), stats["analysis"]))

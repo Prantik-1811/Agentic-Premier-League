@@ -10,7 +10,8 @@ Output format:
 1. KEY STATS — specific numbers only
 2. PATTERN ANALYSIS — what the data reveals
 3. WIN PROBABILITY — current % for the batting team
-4. RECOMMENDED FOCUS — what the Strategist must consider
+4. BOWLER RESOURCE CHECK — List each bowler in the bowling team, their overs bowled, and their remaining overs (out of max 4.0 overs. Note: 2.2 overs bowled means 14 balls bowled, leaving 10 balls remaining which is 1.4 overs!). Explicitly state who is available for the death overs.
+5. RECOMMENDED FOCUS — what the Strategist must consider
 Speak in cricket statistics. Be precise. No filler."""
 
 class StatsAnalystAgent:
