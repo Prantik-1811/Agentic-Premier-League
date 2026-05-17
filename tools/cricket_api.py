@@ -256,7 +256,7 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
         return {"error": str(e), "scraped": False, "source": cricbuzz_url}
 
 # TOOL 2 — Win probability (DLS-style resource model)
-def calculate_win_probability(batting_team, score, wickets, balls_remaining, target, pitch_condition="flat", dew_factor=0.0) -> dict:
+def calculate_win_probability(batting_team: str, score: int, wickets: int, balls_remaining: int, target: int, pitch_condition: str = "flat", dew_factor: float = 0.0) -> dict:
     RESOURCE_TABLE = {
         (120,0):100.0,(120,1):93.4,(120,2):85.1,(120,3):74.9,(120,4):62.7,(120,5):49.0,(120,6):34.9,(120,7):22.0,(120,8):11.9,(120,9):4.7,(120,10):0.0,
         (90,0):85.1,(90,1):79.4,(90,2):72.4,(90,3):63.5,(90,4):52.6,(90,5):40.5,(90,6):28.3,(90,7):17.3,(90,8):9.0,(90,9):3.3,(90,10):0.0,
