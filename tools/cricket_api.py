@@ -196,7 +196,6 @@ def fetch_live_match_state(cricbuzz_url: str) -> dict:
             venue = venue_tag.get_text(strip=True)
         if not venue:
             full_text = soup.get_text(" ")
-            import re
             match = re.search(r"(?:at|venue)[:\s]+([A-Z][^\n,]{5,40})", full_text)
             if match:
                 venue = match.group(1).strip()
