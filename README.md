@@ -1,54 +1,111 @@
-# Captain Cool — Multi-Agent IPL Match Strategist
+# 🧠 Captain Cool — Multi-Agent IPL Match Strategist
 
-## Architecture
-```
-   [Match State]
-        |
-        v
- [Stats Analyst]
-        | (Stats Data)
-        v
-  [Strategist]  <----->  [Devil's Advocate]
-        | (Final Plan)
-        v
-  [Commentator]
-        |
-        v
-    [UI Stream]
+> "Become the ultimate MS Dhoni. Leverage real-time Cricbuzz intelligence, advanced mathematical bowler resource models, and an agentic debate loop to make game-winning tactical decisions."
+
+---
+
+## ⚡ Features & Capabilities
+
+* **📡 Live Cricbuzz Dual-Page Scraper**: Instantly pulls and merges real-time match details from both the active **Commentary** page (for live score, overs, wickets, active batters) and **Scorecard** page (for precise venue details, full rosters, playing XI, bench, and bowling statistics).
+* **🤖 Multi-Agent Strategic Debate Loop**:
+  * 📊 **Stats Analyst Agent**: Parses statistics, computes head-to-head records, evaluates live pitch conditions, and runs dedicated bowler resource audits.
+  * 🧠 **Dhoni-Style Strategist Agent**: Proposes bold, high-impact tactical decisions (bowler choices, death over strategies, field sets, impact players).
+  * 👹 **Devil's Advocate Agent**: Actively challenges proposals, stress-tests tactical calls under pressure, and exposes latent strategic flaws.
+  * 🛡️ **Strategist Defense**: Re-evaluates the critiques, defends the core masterplan, or pivots dynamically to build a robust final plan.
+  * 🎙️ **TV Commentator Agent**: Narrates the final tactical plan in a Harsha Bhogle-style broadcast voice to wow the user.
+* **🛡️ Quota-Exhaustion Resiliency (Multi-Model Hot-Fallback)**: If `gemini-2.5-flash` hits daily free-tier limits, the orchestrator automatically swaps all agents to a **`gemini-flash-latest`** (Gemini 1.5 Flash) fallback on the fly, instantly hot-retrying requests for a completely lag-free user experience.
+* **📈 Advanced Bowler Resource Model**: Computes remaining bowler resources by tracking overs bowled as exact ball values (e.g. `2.2` bowled = 14 balls) and subtracting them from the 4-over maximum (24 balls) to identify available death-bowlers and unbowled squad resources.
+* **💎 Sleek Streamlit Dashboard**: A high-fidelity dark-themed interface showing the live scoreboard, automatic form-filling from Cricbuzz URLs, live tactical confidence metrics, and a beautiful step-by-step progress visualizer for the agent debate.
+
+---
+
+## 🏗️ Multi-Agent Architecture
+
+```mermaid
+graph TD
+    A[Cricbuzz Match URL] -->|Dual-Page Scrape| B[MatchState Dataclass]
+    B -->|Active Fields / Squads| C[Streamlit UI Form]
+    C -->|🧠 Make Captain's Call| D[Orchestrator Debate Loop]
+    
+    subgraph Orchestrator [CaptainCoolOrchestrator]
+        D -->|Step 1| E[Stats Analyst Agent]
+        E -->|Stats Intelligence| F[Strategist Agent]
+        F -->|Tactical Proposal| G[Devil's Advocate Agent]
+        G -->|Critical Challenge| H[Strategist Defense]
+        H -->|Final Tactical Call| I[Commentator Agent]
+    end
+
+    I -->|TV Broadcast Narrator| J[Harsha Bhogle Commentary Output]
+    H -->|Calculate Similarities| K[Confidence Index %]
+    
+    style Orchestrator fill:#1e1e2e,stroke:#313244,stroke-width:2px
 ```
 
-## Setup
+---
+
+## 🛠️ Tech Stack & Dependencies
+
+* **Core Language**: Python 3.10+
+* **Framework**: Streamlit (Premium UI & Slider Controls)
+* **LLM Client**: Google GenAI SDK (`google-genai` leveraging `gemini-2.5-flash` & `gemini-flash-latest` fallbacks)
+* **Scraper**: BeautifulSoup4 & ScraperAPI (Dynamic Dual-Crawler)
+* **Environment**: Dotenv (Local Keys Separation)
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/your-username/captain-cool.git
+cd captain-cool
+```
+
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory and add your credentials:
+```ini
+GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+SCRAPERAPI_KEY="YOUR_SCRAPERAPI_KEY"
+CRICAPI_KEY="YOUR_CRICAPI_KEY"
+```
+
+### 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
-# Add GEMINI_API_KEY to .env
+```
+
+### 4. Run the Dashboard
+```bash
 streamlit run app.py
 ```
+Open **`http://localhost:8501`** in your browser to start directing the match!
 
-## How It Works
-**Stats Analyst**: Gathers intelligence using function calling (win probability, player stats, head-to-head records). It focuses purely on numbers, establishing the ground truth for decision making.
+---
 
-**Strategist**: The core decision maker. Takes the intelligence from the Stats Analyst and acts like MS Dhoni—making bold, decisive tactical calls including bowler selection, field placements, and impact player usage.
+## 🔮 Strategic Debate Flow Example
 
-**Devil's Advocate**: Challenges the Strategist's plan by actively seeking flaws and proposing counter-arguments, forcing a more robust final decision.
-
-**Match Commentator**: Takes the final finalized tactical decision and narrates it in a TV-style, Harsha Bhogle-esque commentary to make the output engaging for the user.
-
-## Sample Output
 ```
-🔵 [Stats Analyst] 
-- CSK win probability stands at ~45%
-- Siraj economy: 8.5
-- H2H: Jadeja has scored 45 runs off 35 balls against Siraj (2 dismissals)
+📊 [Stats Analyst]
+  - Target: 223 | Required Run Rate: 11.15 rpo | Balls Remaining: 120
+  - Harpreet Brar has bowled 4.0 overs (0.0 remaining).
+  - Lockie Ferguson has bowled 3.0 overs (1.0 remaining, economy: 14.30).
+  - Wankhede Pitch is showing clear assistance for spin; dew factor is currently low.
 
-🟡 [Strategist]
-Captain's Call: Bowl Siraj. Keep mid-off up. Use the turning pitch to cramp Jadeja.
+🧠 [Strategist Proposal]
+  - Dhoni's Call: Bowl Yuzvendra Chahal for the 18th over instead of Starc. Keep deep mid-wicket and long-on back. Use slow leg-breaks to tempt the batter into hitting against the spin.
 
-🔴 [Devil's Advocate]
-Counter-argument: Siraj might go for runs if the dew factor is 0.7. Bring in Starc instead to exploit the seam.
+👹 [Devil's Advocate Challenge]
+  - Counter-Argument: Chahal's economy in the death overs has historically climbed to 11.5. If the batter gets underneath the leg-break, the short boundary at Wankhede makes this plan extremely high risk. Starc's yorkers represent a safer statistical play.
 
-🟢 [Strategist Defense]
-Final Call: We stick with Siraj. Starc is better reserved for the 18th over. The turning pitch will help Siraj's cutters despite the dew.
+🛡️ [Strategist Defense]
+  - Final Call: We stick with Chahal. The batsman has a historical vulnerability (strike-rate of only 95) against leg-spin in the first 5 balls of their innings. Starc's angles are better utilized to clean up the tail in the 19th and 20th.
 
-📺 [Commentator]
-Oh, what a masterstroke! The captain has decided to back his premier fast bowler in the death. The field is set, the crowd is buzzing. Can Siraj deliver against the dangerous Jadeja?
+🎙️ [TV Commentator]
+  - "Oh, absolute magic! You can feel the tension here at the stadium! The captain is walking up to Chahal, handing him the ball. The fielders are moving. Dhoni is setting a trap, and the batsman has no idea what is coming! Let's see if this masterstroke secures the game!"
 ```
+
+---
+
+## 📝 License
+Distributed under the MIT License. See `LICENSE` for more information.
+# Agentic-Premier-League
