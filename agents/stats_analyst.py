@@ -20,7 +20,7 @@ class StatsAnalystAgent:
         self.model_id = "gemini-2.5-flash"
         self.name = "Stats Analyst"
 
-    def analyze_match(self, match_state: dict) -> dict:
+    def analyze_match(self, match_state: dict, image=None) -> dict:
         prompt = f"""Match state:
 {match_state}
 
@@ -30,11 +30,15 @@ Please use your tools to fetch:
 3. Head-to-head for '{match_state.get('strike_batter', '')}' vs '{match_state.get('current_bowler', '')}'
 4. Win probability (using team_batting='{match_state.get('team_batting', '')}', score={match_state.get('current_score', 0)}, wickets={match_state.get('wickets_down', 0)}, balls_remaining={match_state.get('balls_remaining', 30)}, target={match_state.get('target', 175)})
 
-After fetching the real data via tools, produce your STATS ANALYST report."""
+After fetching the real data via tools, produce your STATS ANALYST report. Use the uploaded pitch/scorecard image (if present) to capture any additional context like grass coverage, pitch cracks, or field configurations."""
+
+        contents = [prompt]
+        if image is not None:
+            contents.append(image)
 
         response = self.client.models.generate_content(
             model=self.model_id,
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 tools=[get_venue_weather, get_player_stats, get_head_to_head, calculate_win_probability],

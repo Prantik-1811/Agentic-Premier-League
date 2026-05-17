@@ -1,7 +1,8 @@
 import streamlit as st
 import json as _json
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
+
 
 from cricket_data import MatchState
 from orchestrator import CaptainCoolOrchestrator
@@ -50,6 +51,64 @@ with st.sidebar:
         "🔗 Cricbuzz URL (auto-fills form)",
         placeholder="https://www.cricbuzz.com/live-cricket-scores/..."
     )
+
+    uploaded_image = st.file_uploader("🖼️ Upload Pitch / Scorecard Image (Multimodal)", type=["jpg", "jpeg", "png"])
+    if uploaded_image:
+        st.image(uploaded_image, caption="Uploaded Context Image Preview", use_container_width=True)
+
+    st.divider()
+    st.subheader("🎙️ Voice Command")
+    custom_query = st.text_input("Ask Captain Dhoni (Voice enabled)", placeholder="E.g. Should we bowl Chahal next?")
+    
+    # HTML component for Web Speech API recognition
+    voice_input_html = """
+    <script>
+    var recognition = null;
+    try {
+        var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.lang = 'en-US';
+    } catch(e) {
+        console.error("Speech recognition not supported");
+    }
+    
+    function startListening() {
+        if (!recognition) {
+            alert("Voice Speech Recognition not supported in this browser. Please use Chrome.");
+            return;
+        }
+        recognition.start();
+        var btn = document.getElementById("voice-in-btn");
+        btn.innerText = "🎙️ Listening...";
+        btn.style.background = "#ff5e62";
+        
+        recognition.onresult = function(event) {
+            var text = event.results[0][0].transcript;
+            
+            // Post result to Streamlit text input
+            var inputs = window.parent.document.querySelectorAll('input[placeholder*="Ask Captain Dhoni"]');
+            if (inputs.length > 0) {
+                inputs[0].value = text;
+                inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+            } else {
+                alert("Heard: " + text + " (Please copy & paste into the input box!)");
+            }
+        };
+        
+        recognition.onend = function() {
+            btn.innerText = "🎙️ Dictate Command";
+            btn.style.background = "#2b2b2b";
+        };
+        recognition.onerror = function() {
+            btn.innerText = "🎙️ Dictate Command";
+            btn.style.background = "#2b2b2b";
+        };
+    }
+    </script>
+    <button id="voice-in-btn" onclick="startListening()" style="background: #2b2b2b; color: white; border: 2px solid #FF9900; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; width: 100%; transition: 0.2s;">🎙️ Dictate Command</button>
+    """
+    st.components.v1.html(voice_input_html, height=50)
 
     if st.button("⬇️ Fetch Live State", use_container_width=True):
         with st.spinner("Scraping Cricbuzz..."):
@@ -186,6 +245,12 @@ if go:
         timeouts_left=st.session_state["timeouts"],
     )
 
+    # Convert uploaded image if present
+    pil_image = None
+    if uploaded_image:
+        from PIL import Image
+        pil_image = Image.open(uploaded_image)
+
     orch = CaptainCoolOrchestrator()
     col1, col2 = st.columns([2, 1])
 
@@ -194,7 +259,7 @@ if go:
         with st.status("Running multi-agent debate...", expanded=True) as status:
             def on_step(label):
                 status.update(label=f"⏳ Running: {label}...")
-            result = orch.make_decision(match_state, on_step=on_step)
+            result = orch.make_decision(match_state, on_step=on_step, image=pil_image, custom_query=custom_query)
             status.update(label="✅ Decision ready!", state="complete")
 
         with st.expander("📊 Stats Analyst", expanded=False):
@@ -237,6 +302,51 @@ if go:
             st.metric("Balls Remaining",    balls_left)
 
         st.metric("Decision Confidence", f"{result['confidence']}%")
+        st.info(result["counterfactual"])
         st.divider()
         st.subheader("📺 Commentary")
         st.markdown(result["commentary"]["commentary"])
+        
+        # Inject premium HTML5 speech synthesis for Harsha-style commentator voice
+        import streamlit.components.v1 as components
+        
+        # Clean commentators voice text
+        clean_voice_text = result["commentary"]["commentary"].replace("*", "").replace("#", "").replace("-", " ")
+        
+        tts_html = f"""
+        <script>
+        var synth = window.speechSynthesis;
+        var utterance = null;
+        
+        function speak() {{
+            synth.cancel();
+            utterance = new SpeechSynthesisUtterance({_json.dumps(clean_voice_text)});
+            utterance.rate = 1.05;
+            utterance.pitch = 1.0;
+            
+            var voices = synth.getVoices();
+            var selectedVoice = null;
+            for(var i = 0; i < voices.length; i++) {{
+                var name = voices[i].name.toLowerCase();
+                var lang = voices[i].lang.toLowerCase();
+                if (lang.indexOf('en-in') >= 0 || lang.indexOf('en-gb') >= 0 || lang.indexOf('en-us') >= 0) {{
+                    selectedVoice = voices[i];
+                    if (name.indexOf('male') >= 0 || name.indexOf('google') >= 0) {{
+                        break;
+                    }}
+                }}
+            }}
+            if (selectedVoice) utterance.voice = selectedVoice;
+            synth.speak(utterance);
+        }}
+        
+        function stop() {{
+            synth.cancel();
+        }}
+        </script>
+        <div style="display: flex; gap: 10px; margin-top: 15px; font-family: sans-serif;">
+            <button onclick="speak()" style="background: linear-gradient(135deg, #FF9900 0%, #FF5E62 100%); color: white; border: none; padding: 10px 20px; border-radius: 20px; cursor: pointer; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.2s;">🔊 Play Voice Commentary</button>
+            <button onclick="stop()" style="background: #2b2b2b; color: #ff5e62; border: 2px solid #ff5e62; padding: 8px 18px; border-radius: 20px; cursor: pointer; font-weight: bold; transition: transform 0.2s;">🛑 Stop Voice</button>
+        </div>
+        """
+        components.html(tts_html, height=60)
