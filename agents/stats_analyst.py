@@ -1,5 +1,6 @@
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from tools.cricket_api import get_player_stats, get_head_to_head, calculate_win_probability
 from tools.weather import get_venue_weather
 
@@ -14,44 +15,29 @@ Speak in cricket statistics. Be precise. No filler."""
 
 class StatsAnalystAgent:
     def __init__(self):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel("gemini-2.5-pro")
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model_id = "gemini-2.5-flash"
         self.name = "Stats Analyst"
 
     def analyze_match(self, match_state: dict) -> dict:
-        # Run real tools first
-        strike = match_state.get("strike_batter","")
-        bowler = match_state.get("current_bowler","")
-        venue  = match_state.get("venue","")
-
-        stats   = get_player_stats(strike)
-        h2h     = get_head_to_head(strike, bowler)
-        weather = get_venue_weather(venue)
-        wp      = calculate_win_probability(
-            match_state.get("team_batting",""),
-            match_state.get("current_score",0),
-            match_state.get("wickets_down",0),
-            match_state.get("balls_remaining",30),
-            match_state.get("target",175),
-            match_state.get("pitch_condition","flat"),
-            match_state.get("dew_factor",0)
-        )
-
-        tool_context = f"""
-REAL DATA FETCHED:
-Player stats ({strike}): {stats}
-Head-to-head ({strike} vs {bowler}): {h2h}
-Weather ({venue}): {weather}
-Win probability: {wp}
-"""
-        prompt = f"""{SYSTEM_PROMPT}
-
-Match state:
+        prompt = f"""Match state:
 {match_state}
 
-{tool_context}
+Please use your tools to fetch:
+1. Venue weather for '{match_state.get('venue', '')}'
+2. Player stats for batter '{match_state.get('strike_batter', '')}'
+3. Head-to-head for '{match_state.get('strike_batter', '')}' vs '{match_state.get('current_bowler', '')}'
+4. Win probability (using team_batting='{match_state.get('team_batting', '')}', score={match_state.get('current_score', 0)}, wickets={match_state.get('wickets_down', 0)}, balls_remaining={match_state.get('balls_remaining', 30)}, target={match_state.get('target', 175)})
 
-Now produce your STATS ANALYST report. Use the real data above."""
+After fetching the real data via tools, produce your STATS ANALYST report."""
 
-        response = self.model.generate_content(prompt)
-        return {"agent": self.name, "analysis": response.text, "tool_data": {"stats":stats,"h2h":h2h,"weather":weather,"win_probability":wp}}
+        response = self.client.models.generate_content(
+            model=self.model_id,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[get_venue_weather, get_player_stats, get_head_to_head, calculate_win_probability],
+                temperature=0.2
+            )
+        )
+        return {"agent": self.name, "analysis": response.text, "status": "success"}

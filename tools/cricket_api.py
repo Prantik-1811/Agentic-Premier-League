@@ -1,4 +1,4 @@
-import os, requests, math
+import os, requests, math, re
 from bs4 import BeautifulSoup
 from functools import lru_cache
 
@@ -7,30 +7,220 @@ SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY")
 
 # TOOL 1 — Live match scraper
 def fetch_live_match_state(cricbuzz_url: str) -> dict:
-    proxy = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={cricbuzz_url}"
+    """
+    Scrapes a live Cricbuzz match page via ScraperAPI.
+    Extracts ALL fields needed to populate the match state form.
+    """
+    proxy = f"http://api.scraperapi.com?api_key={SCRAPERAPI_KEY}&url={cricbuzz_url}&render=false"
+
     try:
-        resp = requests.get(proxy, timeout=15)
+        resp = requests.get(proxy, timeout=20)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # ── Innings number ────────────────────────────────────────────────────
+        innings = 1
+        innings_tag = soup.find("div", class_="cb-nav-main")
+        if innings_tag:
+            text = innings_tag.get_text(" ", strip=True).lower()
+            if "2nd" in text or "2nd innings" in text or "target" in text:
+                innings = 2
+
+        # ── Team names ────────────────────────────────────────────────────────
+        team_tags = soup.find_all("div", class_="cb-nav-subhdr")
+        team_batting, team_bowling = "", ""
+        if team_tags:
+            raw = team_tags[0].get_text(" ", strip=True)
+            parts = [p.strip() for p in raw.split("vs")]
+            if len(parts) == 2:
+                team_batting = parts[0].strip()
+                team_bowling = parts[1].strip()
+
+        # Fallback: extract from title
+        if not team_batting:
+            title = soup.find("title")
+            if title:
+                t = title.get_text()
+                if " vs " in t:
+                    teams = t.split(" vs ")
+                    team_batting = teams[0].strip().split()[-1]
+                    team_bowling = teams[1].strip().split()[0]
+
+        # ── Score block: "159/3 (15.2 Ov)" ───────────────────────────────────
         score_tag = soup.find("div", class_="cb-min-bat-rw")
-        raw = score_tag.get_text(strip=True) if score_tag else "0/0 (0.0 Ov)"
-        score_part, over_part = raw.split("(")
-        runs, wickets = score_part.strip().split("/")
-        over_str = over_part.replace("Ov)", "").strip()
-        over, ball = over_str.split(".")
+        raw_score = score_tag.get_text(strip=True) if score_tag else "0/0 (0.0 Ov)"
+
+        current_score, wickets_down, over, ball = 0, 0, 0, 0
+        try:
+            score_part, over_part = raw_score.split("(")
+            runs_str, wkts_str = score_part.strip().split("/")
+            current_score  = int(runs_str.strip())
+            wickets_down   = int(wkts_str.strip())
+            over_str       = over_part.replace("Ov)", "").replace("Ov ", "").strip()
+            if "." in over_str:
+                ov, bl = over_str.split(".")
+                over, ball = int(ov), int(bl)
+            else:
+                over = int(over_str)
+                ball = 0
+        except Exception:
+            pass
+
+        balls_bowled    = over * 6 + ball
+        balls_remaining = 120 - balls_bowled
+
+        # ── CRR and RRR ───────────────────────────────────────────────────────
+        crr, rrr = 0.0, 0.0
         crr_tag = soup.find("div", class_="cb-min-run-rr")
-        crr_text = crr_tag.get_text(strip=True) if crr_tag else "CRR: 0 RRR: 0"
-        crr = float(crr_text.split("CRR:")[1].split()[0]) if "CRR:" in crr_text else 0.0
-        rrr = float(crr_text.split("RRR:")[1].split()[0]) if "RRR:" in crr_text else 0.0
-        balls_remaining = (20 - int(over)) * 6 - int(ball)
+        if crr_tag:
+            crr_text = crr_tag.get_text(strip=True)
+            try:
+                if "CRR:" in crr_text:
+                    crr = float(crr_text.split("CRR:")[1].split()[0])
+                if "RRR:" in crr_text:
+                    rrr = float(crr_text.split("RRR:")[1].split()[0])
+            except Exception:
+                pass
+
+        # Compute CRR from score if not found
+        if crr == 0.0 and balls_bowled > 0:
+            crr = round((current_score / balls_bowled) * 6, 2)
+
+        # ── Target (innings 2 only) ───────────────────────────────────────────
+        target = None
+        if innings == 2:
+            target_tag = soup.find("div", class_="cb-min-inf")
+            if target_tag:
+                t_text = target_tag.get_text(strip=True)
+                import re
+                match = re.search(r"target[:\s]+(\d+)", t_text, re.IGNORECASE)
+                if match:
+                    target = int(match.group(1))
+            # Fallback: look anywhere on page
+            if not target:
+                full_text = soup.get_text(" ")
+                match = re.search(r"[Tt]arget[:\s]+(\d+)", full_text)
+                if match:
+                    target = int(match.group(1))
+
+        # RRR only meaningful in innings 2
+        if innings == 1:
+            rrr = 0.0
+
+        # ── Batter details ────────────────────────────────────────────────────
+        strike_batter, strike_runs, strike_balls   = "", 0, 0
+        non_strike_batter, non_runs, non_balls     = "", 0, 0
+
+        batter_rows = soup.find_all("div", class_="cb-min-itm-rw")
+        batters_found = []
+        for row in batter_rows:
+            cols = row.find_all("div")
+            if len(cols) >= 3:
+                name = cols[0].get_text(strip=True)
+                runs_text  = cols[1].get_text(strip=True)
+                balls_text = cols[2].get_text(strip=True)
+                if name and runs_text.isdigit():
+                    batters_found.append({
+                        "name": name,
+                        "runs": int(runs_text),
+                        "balls": int(balls_text) if balls_text.isdigit() else 0
+                    })
+
+        if len(batters_found) >= 1:
+            strike_batter = batters_found[0]["name"]
+            strike_runs   = batters_found[0]["runs"]
+            strike_balls  = batters_found[0]["balls"]
+        if len(batters_found) >= 2:
+            non_strike_batter = batters_found[1]["name"]
+            non_runs          = batters_found[1]["runs"]
+            non_balls         = batters_found[1]["balls"]
+
+        # ── Current bowler and bowlers used ───────────────────────────────────
+        current_bowler = ""
+        bowlers_used   = {}
+
+        bowler_rows = soup.find_all("div", class_="cb-min-itm-rw cb-min-bwl-itm")
+        for row in bowler_rows:
+            cols = row.find_all("div")
+            if len(cols) >= 4:
+                name    = cols[0].get_text(strip=True)
+                overs_b = cols[1].get_text(strip=True)
+                if name:
+                    try:
+                        bowlers_used[name] = float(overs_b)
+                    except Exception:
+                        bowlers_used[name] = 0.0
+
+        # Current bowler = last one listed (most recently bowling)
+        if bowlers_used:
+            current_bowler = list(bowlers_used.keys())[-1]
+
+        # ── Venue ─────────────────────────────────────────────────────────────
+        venue = ""
+        venue_tag = soup.find("a", class_="cb-nav-tags")
+        if venue_tag:
+            venue = venue_tag.get_text(strip=True)
+        if not venue:
+            full_text = soup.get_text(" ")
+            import re
+            match = re.search(r"(?:at|venue)[:\s]+([A-Z][^\n,]{5,40})", full_text)
+            if match:
+                venue = match.group(1).strip()
+
+        # ── Pitch condition (default flat, let user adjust) ───────────────────
+        pitch_condition = "flat"
+
+        # ── Dew factor: estimate from venue + time ────────────────────────────
+        # Evening matches at coastal venues = higher dew risk
+        coastal_venues = ["wankhede", "eden", "chepauk", "rajiv gandhi", "chinnaswamy"]
+        dew_factor = 0.6 if any(v in venue.lower() for v in coastal_venues) else 0.3
+
         return {
-            "source": cricbuzz_url, "current_score": int(runs),
-            "wickets_down": int(wickets), "over": int(over), "ball": int(ball),
-            "balls_remaining": balls_remaining, "current_run_rate": crr,
-            "required_run_rate": rrr, "scraped": True
+            # Meta
+            "source":   cricbuzz_url,
+            "scraped":  True,
+            "innings":  innings,
+
+            # Teams
+            "team_batting": team_batting,
+            "team_bowling": team_bowling,
+
+            # Score
+            "current_score":  current_score,
+            "wickets_down":   wickets_down,
+            "over":           over,
+            "ball":           ball,
+            "balls_remaining": balls_remaining,
+            "current_run_rate":  crr,
+            "required_run_rate": rrr,
+
+            # Target — None if innings 1
+            "target": target,
+
+            # Batters
+            "strike_batter":       strike_batter,
+            "strike_batter_runs":  strike_runs,
+            "strike_batter_balls": strike_balls,
+            "non_strike_batter":       non_strike_batter,
+            "non_strike_batter_runs":  non_runs,
+            "non_strike_batter_balls": non_balls,
+
+            # Bowlers
+            "current_bowler": current_bowler,
+            "bowlers_used":   bowlers_used,
+
+            # Conditions
+            "venue":           venue,
+            "pitch_condition": pitch_condition,
+            "dew_factor":      dew_factor,
+
+            # Defaults
+            "impact_player_available": True,
+            "timeouts_left": 1,
         }
+
     except Exception as e:
-        return {"error": str(e), "scraped": False}
+        return {"error": str(e), "scraped": False, "source": cricbuzz_url}
 
 # TOOL 2 — Win probability (DLS-style resource model)
 def calculate_win_probability(batting_team, score, wickets, balls_remaining, target, pitch_condition="flat", dew_factor=0.0) -> dict:

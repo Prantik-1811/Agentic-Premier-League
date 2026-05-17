@@ -1,29 +1,24 @@
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-SYSTEM_PROMPT = """You are a seasoned IPL commentator — think Harsha Bhogle meets Wasim Akram.
-Translate the captain's decision into cricket-speak that any fan understands.
+SYSTEM_PROMPT = """You are the MATCH COMMENTATOR (think Harsha Bhogle or Ian Bishop).
+Your job: Explain the final strategic decision to the TV audience in pure cricket terminology.
 Format:
-📺 THE CALL EXPLAINED: [2-3 sentences of pure cricket narrative]
-🧠 WHY THIS, NOT THAT:
-  • Not [Alternative 1]: [reason]
-  • Not [Alternative 2]: [reason]
-  • YES this: [decisive factor]
-🎬 THE NARRATIVE: [How this fits the match story — momentum, psychology, pressure]
-No ML jargon. No percentages in prose. Just cricket."""
+🎙️ ON AIR: [1-2 paragraphs explaining the tactical nuance of the decision, the match situation, and why the captain went this route.]
+Make it sound exciting, insightful, and accessible."""
 
 class CommentatorAgent:
     def __init__(self):
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        self.model = genai.GenerativeModel("gemini-2.5-pro")
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.model_id = "gemini-2.5-flash"
         self.name = "Match Commentator"
 
     def explain_decision(self, match_state: dict, final_decision: str) -> dict:
-        prompt = f"""{SYSTEM_PROMPT}
-
-Match state: {match_state}
-Captain's final decision: {final_decision}
-
-Explain this like you're on air. Make fans believe in it."""
-        response = self.model.generate_content(prompt)
+        prompt = f"""Match state: {match_state}\nFinal Decision by Captain: {final_decision}\n\nDeliver your commentary."""
+        response = self.client.models.generate_content(
+            model=self.model_id, 
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+        )
         return {"agent": self.name, "commentary": response.text, "status": "success"}
