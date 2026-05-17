@@ -31,16 +31,25 @@ class CaptainCoolOrchestrator:
         if not bowlers:
             bowlers = ["Mitchell Starc", "Lockie Ferguson", "Harpreet Brar", "Yuzvendra Chahal"]
         
+        # EXCLUDE the active batters to prevent false matching!
+        batters = [
+            match_state.get("strike_batter", "").lower().strip(),
+            match_state.get("non_strike_batter", "").lower().strip()
+        ]
+        valid_bowlers = [b for b in bowlers if b.lower().strip() not in batters and b.strip()]
+        if not valid_bowlers:
+            valid_bowlers = bowlers
+        
         # Simple extraction of proposed bowler
-        proposed_bowler = match_state.get("current_bowler", bowlers[0])
-        for b in bowlers:
+        proposed_bowler = match_state.get("current_bowler", valid_bowlers[0])
+        for b in valid_bowlers:
             if b.lower() in proposal.lower():
                 proposed_bowler = b
                 break
                 
         # Find alternative bowler from challenge
-        alternative = bowlers[0] if bowlers[0] != proposed_bowler else (bowlers[1] if len(bowlers) > 1 else "Starc")
-        for b in bowlers:
+        alternative = valid_bowlers[0] if valid_bowlers[0] != proposed_bowler else (valid_bowlers[1] if len(valid_bowlers) > 1 else "Starc")
+        for b in valid_bowlers:
             if b != proposed_bowler and b.lower() in challenge.lower():
                 alternative = b
                 break
