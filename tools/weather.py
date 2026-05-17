@@ -1,43 +1,50 @@
 import requests
 
+VENUE_COORDS = {
+    "wankhede":              (18.9388, 72.8258),
+    "eden gardens":          (22.5645, 88.3433),
+    "chinnaswamy":           (12.9789, 77.5996),
+    "chepauk":               (13.0635, 80.2790),
+    "narendra modi":         (23.0900, 72.5970),
+    "feroz shah kotla":      (28.6362, 77.2410),
+    "punjab cricket":        (30.6942, 76.8606),
+    "rajiv gandhi hyderabad":(17.4032, 78.4008),
+    "sawai mansingh":        (26.9124, 75.7873),
+    "barsapara":             (26.1589, 91.6514),
+}
+
 def get_venue_weather(venue: str) -> dict:
-    """Calls Open-Meteo API to get weather info for a venue"""
-    # Mapped roughly to city coordinates
-    locations = {
-        "Wankhede": {"lat": 18.93, "lon": 72.82},
-        "Chepauk": {"lat": 13.06, "lon": 80.27},
-        "Chinnaswamy": {"lat": 12.97, "lon": 77.59},
-        "Eden Gardens": {"lat": 22.56, "lon": 88.34},
-    }
-    
-    loc = locations.get(venue, {"lat": 20.59, "lon": 78.96}) # Default to India
-    
-    url = f"https://api.open-meteo.com/v1/forecast?latitude={loc['lat']}&longitude={loc['lon']}&current_weather=true&hourly=relative_humidity_2m,dew_point_2m"
+    key = venue.lower().strip()
+    coords = next((v for k, v in VENUE_COORDS.items() if k in key or key in k), None)
+    if not coords:
+        return {"error": f"Venue '{venue}' not in database", "dew_risk": "unknown"}
+    lat, lon = coords
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&current=temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation"
+        f"&forecast_days=1&timezone=Asia%2FKolkata"
+    )
     try:
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
-        data = resp.json()
-        current = data.get("current_weather", {})
-        
-        # very simple heuristic for dew probability based on temperature and wind
-        wind_speed = current.get("windspeed", 10.0)
-        temp = current.get("temperature", 25.0)
-        
-        # high humidity and low wind increases dew
-        dew_prob = 50.0
-        if wind_speed < 10: dew_prob += 20
-        if temp < 25: dew_prob += 10
-        
+        data = requests.get(url, timeout=10).json()
+        c = data.get("current", {})
+        humidity = c.get("relative_humidity_2m", 0)
+        wind     = c.get("wind_speed_10m", 0)
+        temp     = c.get("temperature_2m", 25)
+        precip   = c.get("precipitation", 0)
+        dew_score = (humidity / 100) * (1 - min(wind / 20, 1))
+        dew_risk  = "high" if dew_score > 0.65 else "medium" if dew_score > 0.35 else "low"
         return {
-            "humidity": 75, # Mocking as Open-Meteo hourly would need parsing by current time
-            "wind_speed": wind_speed,
-            "dew_probability": min(100.0, dew_prob),
-            "temperature": temp
+            "venue": venue, "temperature_c": temp, "humidity_pct": humidity,
+            "wind_kmh": wind, "precipitation_mm": precip,
+            "dew_risk": dew_risk, "dew_risk_score": round(dew_score, 2),
+            "impact": (
+                "Dew heavily favors batting — bowlers will lose grip after over 15"
+                if dew_risk == "high" else
+                "Some dew expected — monitor grip in death overs"
+                if dew_risk == "medium" else
+                "Dry conditions — pitch behavior consistent both innings"
+            )
         }
     except Exception as e:
-        return {
-            "humidity": 60,
-            "wind_speed": 12,
-            "dew_probability": 30,
-            "error": str(e)
-        }
+        return {"error": str(e), "venue": venue, "dew_risk": "unknown"}

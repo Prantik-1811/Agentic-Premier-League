@@ -1,64 +1,47 @@
-import asyncio
-import random
-from agents.stats_analyst import get_stats_analyst
-from agents.strategist import get_strategist
-from agents.devils_advocate import get_devils_advocate
-from agents.commentator import get_commentator
+from agents.stats_analyst import StatsAnalystAgent
+from agents.strategist import StrategistAgent
+from agents.devils_advocate import DevilsAdvocateAgent
+from agents.commentator import CommentatorAgent
 from cricket_data import MatchState
 
-stats_analyst = get_stats_analyst()
-strategist = get_strategist()
-devils_advocate = get_devils_advocate()
-commentator = get_commentator()
+class CaptainCoolOrchestrator:
+    def __init__(self):
+        self.stats_analyst    = StatsAnalystAgent()
+        self.strategist       = StrategistAgent()
+        self.devils_advocate  = DevilsAdvocateAgent()
+        self.commentator      = CommentatorAgent()
 
-def calculate_confidence(proposal, challenge, final):
-    # Mock confidence calculation based on string lengths and random variance
-    base = 75
-    variance = random.randint(-15, 20)
-    return max(0, min(100, base + variance))
+    def calculate_confidence(self, proposal: str, challenge: str, final: str) -> int:
+        proposal_words = set(proposal.lower().split())
+        final_words    = set(final.lower().split())
+        overlap  = len(proposal_words & final_words)
+        total    = len(proposal_words | final_words)
+        similarity = overlap / total if total > 0 else 0.5
+        base = int(similarity * 100)
+        challenge_keywords  = ["economy","average","stats show","historically","fatigue","vulnerable","risk","weakness","data"]
+        conviction_keywords = ["stick with","confident","clear call","no doubt","best option","stands firm"]
+        penalty = min(sum(1 for kw in challenge_keywords  if kw in challenge.lower()) * 3, 20)
+        boost   = sum(1 for kw in conviction_keywords if kw in final.lower()) * 2
+        return max(45, min(92, base - penalty + boost))
 
-async def captain_decision(match_state: MatchState):
-    """
-    The main multi-agent debate loop.
-    Yields intermediate results for the UI to stream.
-    """
-    state_str = str(match_state.to_dict())
-    
-    # Round 1: Intelligence gathering
-    yield {"step": "stats_analyst", "status": "running"}
-    stats = await stats_analyst.run(state_str)
-    yield {"step": "stats_analyst", "status": "done", "content": stats}
-    
-    # Round 2: Initial proposal
-    yield {"step": "strategist_initial", "status": "running"}
-    proposal = await strategist.run(f"Match State: {state_str}\nStats: {stats}")
-    yield {"step": "strategist_initial", "status": "done", "content": proposal}
-    
-    # Round 3: Challenge
-    yield {"step": "devils_advocate", "status": "running"}
-    challenge = await devils_advocate.run(f"Stats: {stats}\nProposal: {proposal}")
-    yield {"step": "devils_advocate", "status": "done", "content": challenge}
-    
-    # Round 4: Defense/Revision
-    yield {"step": "strategist_final", "status": "running"}
-    final = await strategist.run(f"Initial Proposal: {proposal}\nChallenge: {challenge}\nRevise and finalize your decision.")
-    yield {"step": "strategist_final", "status": "done", "content": final}
-    
-    # Round 5: Commentary
-    yield {"step": "commentator", "status": "running"}
-    comment = await commentator.run(f"Match State: {state_str}\nFinal Decision: {final}")
-    yield {"step": "commentator", "status": "done", "content": comment}
-    
-    # Final Summary Output
-    yield {
-        "step": "final_summary",
-        "status": "done",
-        "content": {
-            "stats_analysis": stats,
-            "initial_proposal": proposal,
-            "challenge": challenge,
-            "final_decision": final,
-            "commentary": comment,
-            "confidence_score": calculate_confidence(proposal, challenge, final)
+    def make_decision(self, match_state: MatchState, on_step=None) -> dict:
+        def step(label, fn):
+            if on_step: on_step(label)
+            return fn()
+
+        stats    = step("Stats Analyst", lambda: self.stats_analyst.analyze_match(match_state.to_dict()))
+        proposal = step("Strategist",    lambda: self.strategist.propose_strategy(match_state.to_dict(), stats["analysis"]))
+        challenge= step("Devil's Advocate", lambda: self.devils_advocate.challenge_strategy(match_state.to_dict(), proposal["proposal"], stats["analysis"]))
+        defense  = step("Strategist Defense", lambda: self.strategist.defend_strategy(match_state.to_dict(), proposal["proposal"], challenge["challenge"]))
+        commentary=step("Commentator",   lambda: self.commentator.explain_decision(match_state.to_dict(), defense["defense"]))
+
+        confidence = self.calculate_confidence(proposal["proposal"], challenge["challenge"], defense["defense"])
+
+        return {
+            "stats":      stats,
+            "proposal":   proposal,
+            "challenge":  challenge,
+            "defense":    defense,
+            "commentary": commentary,
+            "confidence": confidence,
         }
-    }

@@ -1,117 +1,109 @@
 import streamlit as st
-import asyncio
-import json
+import json as _json
+from dotenv import load_dotenv
+load_dotenv()
+
 from cricket_data import MatchState
-from orchestrator import captain_decision
+from orchestrator import CaptainCoolOrchestrator
+from tools.cricket_api import calculate_win_probability, fetch_live_match_state
 
-st.set_page_config(page_title="Captain Cool", layout="wide")
+st.set_page_config(page_title="Captain Cool 🏏", page_icon="🏏", layout="wide")
+st.title("🏏 Captain Cool — Multi-Agent IPL Strategist")
+st.caption("Powered by Google Gemini 2.5 Pro · 4 Agents · Real Cricket Data")
 
-st.title("🏏 Captain Cool — Multi-Agent IPL Match Strategist")
-
-# Sidebar Form
 with st.sidebar:
-    st.header("Match State Input")
-    
-    # URL autofill mock
-    url = st.text_input("Cricbuzz URL (Optional auto-fill)")
-    
-    innings = st.radio("Innings", [1, 2], index=1)
-    over = st.slider("Over", 0, 19, 15)
-    ball = st.slider("Ball", 0, 5, 3)
-    team_batting = st.text_input("Batting Team", "CSK")
-    team_bowling = st.text_input("Bowling Team", "RCB")
-    current_score = st.number_input("Current Score", 0, 400, 98)
-    wickets_down = st.slider("Wickets Down", 0, 10, 4)
-    
-    strike_batter = st.text_input("Strike Batter", "Jadeja")
-    strike_batter_runs = st.number_input("Strike Batter Runs", 0, 200, 28)
-    strike_batter_balls = st.number_input("Strike Batter Balls", 0, 100, 22)
-    
-    non_strike_batter = st.text_input("Non-Strike Batter", "Moeen Ali")
-    non_strike_batter_runs = st.number_input("Non-Strike Batter Runs", 0, 200, 18)
-    non_strike_batter_balls = st.number_input("Non-Strike Batter Balls", 0, 100, 15)
-    
-    current_bowler = st.text_input("Current Bowler", "Siraj")
-    bowlers_used_str = st.text_area("Bowlers Used (JSON)", '{"Siraj": 3.0, "Hazelwood": 2.0, "Starc": 1.5, "Rabada": 3.0}')
-    
-    pitch_condition = st.selectbox("Pitch Condition", ["turning", "flat", "two-paced", "seaming"])
-    dew_factor = st.slider("Dew Factor (%)", 0, 100, 70) / 100.0
-    venue = st.text_input("Venue", "Wankhede")
-    target = st.number_input("Target", 0, 400, 175)
-    balls_remaining = st.number_input("Balls Remaining", 0, 120, 30)
-    required_run_rate = st.number_input("Required Run Rate", 0.0, 36.0, 15.4)
-    impact_player_available = st.checkbox("Impact Player Available", value=True)
-    timeouts_left = st.slider("Timeouts Left", 0, 2, 1)
-    
-    analyze_btn = st.button("Generate Strategy")
-
-# Main Panel
-if analyze_btn:
-    try:
-        bowlers_used = json.loads(bowlers_used_str)
-    except Exception:
-        bowlers_used = {}
-        
-    match_state = MatchState(
-        innings=innings, over=over, ball=ball, team_batting=team_batting, team_bowling=team_bowling,
-        current_score=current_score, wickets_down=wickets_down, strike_batter=strike_batter,
-        strike_batter_runs=strike_batter_runs, strike_batter_balls=strike_batter_balls,
-        non_strike_batter=non_strike_batter, non_strike_batter_runs=non_strike_batter_runs,
-        non_strike_batter_balls=non_strike_batter_balls, current_bowler=current_bowler,
-        bowlers_used=bowlers_used, pitch_condition=pitch_condition, dew_factor=dew_factor,
-        venue=venue, target=target, balls_remaining=balls_remaining, required_run_rate=required_run_rate,
-        impact_player_available=impact_player_available, timeouts_left=timeouts_left
-    )
-    
-    st.subheader("Agent Debate in Progress...")
-    
-    async def run_analysis():
-        containers = {
-            "stats_analyst": st.empty(),
-            "strategist_initial": st.empty(),
-            "devils_advocate": st.empty(),
-            "strategist_final": st.empty(),
-            "commentator": st.empty()
-        }
-        
-        final_data = None
-        
-        async for result in captain_decision(match_state):
-            step = result["step"]
-            if step == "final_summary":
-                final_data = result["content"]
-                break
-                
-            status = result["status"]
-            container = containers[step]
-            
-            icons = {
-                "stats_analyst": "🔵 [Stats Analyst]",
-                "strategist_initial": "🟡 [Strategist Initial]",
-                "devils_advocate": "🔴 [Devil's Advocate]",
-                "strategist_final": "🟢 [Strategist Defense]",
-                "commentator": "📺 [Commentator]"
-            }
-            title = icons.get(step, step)
-            
-            if status == "running":
-                with container.expander(f"{title} - Thinking...", expanded=True):
-                    st.spinner("Analyzing...")
+    st.header("📋 Match State")
+    cricbuzz_url = st.text_input("🔗 Cricbuzz URL (auto-fills form)", placeholder="https://www.cricbuzz.com/live-cricket-scores/...")
+    if cricbuzz_url and st.button("Fetch Live State"):
+        with st.spinner("Scraping Cricbuzz..."):
+            live = fetch_live_match_state(cricbuzz_url)
+            if live.get("scraped"):
+                st.success("Fetched!")
+                st.json(live)
             else:
-                with container.expander(f"{title} - Done", expanded=False):
-                    st.write(result["content"])
-        
-        if final_data:
-            st.markdown("---")
-            st.markdown(f"""
-            ### 🏏 CAPTAIN'S CALL
-            **Next Bowler:** {final_data['final_decision'][:50]}...
-            **Confidence:** {final_data['confidence_score']}%
-            """)
-            st.success(final_data['final_decision'])
-            
-            st.markdown("---")
-            st.markdown("### 📺 Live Commentary")
-            st.info(final_data['commentary'])
+                st.error(f"Failed: {live.get('error')}")
+    st.divider()
+    innings  = st.radio("Innings", [1, 2], horizontal=True)
+    over     = st.slider("Over", 0, 19, 15)
+    ball     = st.slider("Ball", 0, 5, 3)
+    team_bat = st.text_input("Batting Team", "CSK")
+    team_bowl= st.text_input("Bowling Team", "RCB")
+    score    = st.number_input("Score", 0, 300, 98)
+    wickets  = st.slider("Wickets Down", 0, 9, 4)
+    st.subheader("Batters")
+    strike_b = st.text_input("Strike Batter", "Jadeja")
+    strike_r = st.number_input("Runs", 0, 200, 28, key="sr")
+    strike_bl= st.number_input("Balls", 0, 200, 22, key="sb")
+    non_b    = st.text_input("Non-Strike Batter", "Moeen Ali")
+    non_r    = st.number_input("Runs", 0, 200, 18, key="nr")
+    non_bl   = st.number_input("Balls", 0, 200, 15, key="nb")
+    st.subheader("Bowling")
+    curr_bowl= st.text_input("Current Bowler", "Siraj")
+    bowlers_raw = st.text_area("Bowlers Used (JSON)", '{"Siraj":3.0,"Hazelwood":2.0,"Starc":1.5,"Rabada":3.0}')
+    st.subheader("Conditions")
+    pitch    = st.selectbox("Pitch", ["turning","flat","two-paced","seaming"])
+    dew      = st.slider("Dew Factor %", 0, 100, 70) / 100
+    venue    = st.text_input("Venue", "Wankhede")
+    target   = st.number_input("Target", 0, 300, 175)
+    balls_rem= st.number_input("Balls Remaining", 0, 120, 30)
+    rrr      = st.number_input("Required Run Rate", 0.0, 36.0, 15.4)
+    impact   = st.checkbox("Impact Player Available", True)
+    timeouts = st.slider("Timeouts Left", 0, 2, 1)
+    go       = st.button("🧠 Make Captain's Call", type="primary", use_container_width=True)
 
-    asyncio.run(run_analysis())
+if go:
+    try:
+        bowlers_dict = _json.loads(bowlers_raw)
+    except Exception:
+        bowlers_dict = {"Siraj": 3.0, "Hazelwood": 2.0}
+
+    match_state = MatchState(
+        innings=innings, over=over, ball=ball,
+        team_batting=team_bat, team_bowling=team_bowl,
+        current_score=score, wickets_down=wickets,
+        strike_batter=strike_b, strike_batter_runs=strike_r, strike_batter_balls=strike_bl,
+        non_strike_batter=non_b, non_strike_batter_runs=non_r, non_strike_batter_balls=non_bl,
+        current_bowler=curr_bowl, bowlers_used=bowlers_dict,
+        pitch_condition=pitch, dew_factor=dew, venue=venue,
+        target=target, balls_remaining=balls_rem, required_run_rate=rrr,
+        impact_player_available=impact, timeouts_left=timeouts
+    )
+
+    orch = CaptainCoolOrchestrator()
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.subheader("🤖 Agent Debate")
+        with st.status("Running multi-agent debate...", expanded=True) as status:
+            steps_done = []
+            def on_step(label):
+                steps_done.append(label)
+                status.update(label=f"Running: {label}...")
+
+            result = orch.make_decision(match_state, on_step=on_step)
+            status.update(label="✅ Decision ready!", state="complete")
+
+        with st.expander("📊 Stats Analyst", expanded=False):
+            st.markdown(result["stats"]["analysis"])
+            if result["stats"].get("tool_data"):
+                st.json(result["stats"]["tool_data"])
+
+        with st.expander("🎯 Strategist — Initial Proposal", expanded=False):
+            st.markdown(result["proposal"]["proposal"])
+
+        with st.expander("🔴 Devil's Advocate — Challenge", expanded=True):
+            st.markdown(result["challenge"]["challenge"])
+
+        with st.expander("✅ Strategist — Final Decision", expanded=True):
+            st.markdown(result["defense"]["defense"])
+
+    with col2:
+        st.subheader("🏆 Captain's Call")
+        wp = calculate_win_probability(team_bat, score, wickets, balls_rem, target, pitch, dew)
+        st.metric("Win Probability",     wp["win_probability_pct"])
+        st.metric("Decision Confidence", f"{result['confidence']}%")
+        st.metric("Resources Remaining", f"{wp.get('resource_remaining_pct','?')}%")
+        st.metric("Expected Score From Here", wp.get("expected_score_from_here","?"))
+        st.divider()
+        st.subheader("📺 Commentary")
+        st.markdown(result["commentary"]["commentary"])
